@@ -115,11 +115,11 @@ export async function fetchTitle(kind: "chat" | "family", texts: string[]): Prom
   }
 }
 
-const ITEM_RE =/^\s*(\d+[.)]|[-–—•*]\s)/;
+const ITEM_RE = /^\s*\d+[.)]\s/;
 const STRIP_RE = /^\s*(\d+[.)]\s*|[-–—•*]\s+)/;
 
 /**
- * Возвращает пункты списка, если в тексте есть 2+ строки-пункта подряд
+ * Возвращает пункты нумерованного списка (1. 2. 3.), если их 2+ подряд
  * (пустые строки между ними допустимы). Иначе — пустой массив.
  */
 export function detectList(text: string): string[] {

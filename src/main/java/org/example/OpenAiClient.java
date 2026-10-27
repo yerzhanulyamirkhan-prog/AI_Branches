@@ -1,5 +1,5 @@
 package org.example;
- 
+
 import java.io.IOException;
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -11,7 +11,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.regex.Pattern;
- 
+
 /**
  * Клиент для любого провайдера с OpenAI-совместимым API (POST {base}/chat/completions):
  * Groq (Qwen, GPT-OSS), Moonshot (Kimi), NVIDIA NIM (Kimi K2), DeepSeek, OpenRouter и т. д.
@@ -21,24 +21,24 @@ import java.util.regex.Pattern;
  * следующая модель из списка. Ключ уходит только в заголовке Authorization и не попадает в логи.
  */
 public final class OpenAiClient {
- 
+
     public static final String DEFAULT_BASE_URL = "https://api.groq.com/openai/v1";
     public static final List<String> DEFAULT_MODELS = List.of("qwen/qwen3-32b", "openai/gpt-oss-120b");
- 
+
     private static final Pattern SAFE_MODEL = Pattern.compile("[A-Za-z0-9._:/-]{1,100}");
     private static final Pattern THINK = Pattern.compile("(?s)<think>.*?</think>");
- 
+
     private final String apiKey;
     private final List<String> models;
     private final String baseUrl;
     private final Duration attemptTimeout;
     private final Duration totalTimeout;
     private final HttpClient http;
- 
+
     public OpenAiClient(String apiKey, List<String> models, String baseUrl) {
         this(apiKey, models, baseUrl, Duration.ofSeconds(20), Duration.ofSeconds(40));
     }
- 
+
     public OpenAiClient(String apiKey, List<String> models, String baseUrl,
                         Duration attemptTimeout, Duration totalTimeout) {
         if (apiKey == null || apiKey.isBlank()) {
@@ -62,7 +62,7 @@ public final class OpenAiClient {
                 .connectTimeout(Duration.ofSeconds(8))
                 .build();
     }
- 
+
     /** История (последнее — от пользователя) -> ответ модели. */
     public String ask(List<Message> history) {
         long deadline = System.nanoTime() + totalTimeout.toNanos();
@@ -71,7 +71,7 @@ public final class OpenAiClient {
         java.util.Set<String> rejected = new java.util.HashSet<>();
         String rejectedDetail = null;
         boolean otherProblems = false;
- 
+
         for (int round = 0; round < 2; round++) {
             for (String model : models) {
                 if (rejected.contains(model)) {
@@ -146,9 +146,9 @@ public final class OpenAiClient {
         }
         throw new AiException("ИИ сейчас недоступен или перегружен (" + lastProblem + "). Попробуйте ещё раз через минуту.");
     }
- 
+
     // ------------------------------------------------------------ request/response
- 
+
     /** Для Qwen3 «думать» отключаем (иначе ответ в разы дольше), для GPT-OSS ставим минимум. */
     static String reasoningEffort(String model) {
         String m = model.toLowerCase();
@@ -160,7 +160,16 @@ public final class OpenAiClient {
         }
         return null;
     }
- 
+
+    /** Инструкция для модели: язык, формат записи и честность про отсутствие интернета. */
+    static final String SYSTEM_PROMPT =
+            "Отвечай на языке пользователя, по умолчанию на русском. Отвечай кратко и по делу. "
+            + "Оформляй ответ в Markdown: списки, **жирный** текст, заголовки только при необходимости. "
+            + "Все формулы и математические символы записывай в LaTeX: короткие в одинарных долларах ($x^2$), "
+            + "крупные отдельной строкой в двойных ($$\\frac{a}{b}$$). Не используй \\( \\) и \\[ \\]. "
+            + "У тебя нет доступа к интернету: не выдумывай новости и свежие данные, прямо скажи, "
+            + "что не знаешь актуальной информации.";
+
     static String buildRequest(String model, List<Message> history, boolean withReasoning) {
         // Склеиваем подряд идущие реплики одной роли и начинаем с user: так принимают все провайдеры.
         List<String[]> turns = new ArrayList<>();
@@ -176,10 +185,9 @@ public final class OpenAiClient {
             }
         }
         StringBuilder sb = new StringBuilder("{\"model\":").append(Json.quote(model)).append(",\"messages\":[");
+        sb.append("{\"role\":\"system\",\"content\":").append(Json.quote(SYSTEM_PROMPT)).append('}');
         for (int i = 0; i < turns.size(); i++) {
-            if (i > 0) {
-                sb.append(',');
-            }
+            sb.append(',');
             sb.append("{\"role\":\"").append(turns.get(i)[0]).append("\",\"content\":")
                     .append(Json.quote(turns.get(i)[1])).append('}');
         }
@@ -190,7 +198,7 @@ public final class OpenAiClient {
         }
         return sb.append('}').toString();
     }
- 
+
     /** Текст ответа или null, если его нет. */
     static String extractAnswer(String json) {
         Object root;
@@ -209,7 +217,7 @@ public final class OpenAiClient {
         String text = THINK.matcher(content).replaceAll("").strip();
         return text.isEmpty() ? null : text;
     }
- 
+
     private static String errorMessage(String json) {
         try {
             if (Json.parse(json) instanceof Map<?, ?> o && o.get("error") instanceof Map<?, ?> e
@@ -221,7 +229,7 @@ public final class OpenAiClient {
         }
         return "(без описания)";
     }
- 
+
     private static String explainFatal(int code, String detail) {
         if (code == 401 || code == 403) {
             return "Провайдер ИИ не принял ключ (проверьте LLM_API_KEY и LLM_BASE_URL: ключ верный, не отозван и выдан именно этим провайдером).";
@@ -229,4 +237,3 @@ public final class OpenAiClient {
         return "ИИ отклонил запрос: " + detail;
     }
 }
-

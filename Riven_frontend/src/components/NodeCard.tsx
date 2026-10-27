@@ -4,6 +4,7 @@ import { useStore } from "../store";
 import { detectList } from "../lib/api";
 import { forkLevel, hasStructChildren, isMergeNode, type NodePos } from "../lib/layout";
 import { useMergeVisual } from "./MergeMode";
+import { Markdown } from "./Markdown";
 
 interface Props {
   msg: Message;
@@ -65,7 +66,7 @@ export function NodeCard({ msg, pos }: Props) {
         )}
       </div>
       <div ref={textRef} className={"card-text" + (overflow ? " overflow" : "")}>
-        {msg.pending ? <span className="pending">Печатает…</span> : msg.text}
+        {msg.pending ? <span className="pending">Печатает…</span> : msg.role === "assistant" ? <Markdown text={msg.text} /> : <span className="plain">{msg.text}</span>}
       </div>
     </div>
   );

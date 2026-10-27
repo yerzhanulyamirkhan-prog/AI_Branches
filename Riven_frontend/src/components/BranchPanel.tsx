@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { useStore } from "../store";
 import { isMergeNode, lineage, plural, sisters } from "../lib/layout";
+import { Markdown } from "./Markdown";
 
 export function BranchPanel() {
   const { state, index, selectNode, setBranchMode, sendMessage, mergeStart } = useStore();
@@ -57,7 +58,7 @@ export function BranchPanel() {
           return (
             <div key={m.id} className={"msg" + (merge ? " merge" : "")}>
               <span className="caption">{merge ? "Слияние" : m.role === "user" ? "Вы" : "Ассистент"}</span>
-              <div className="msg-text">{m.pending ? <span className="pending">Печатает…</span> : m.text}</div>
+              <div className="msg-text">{m.pending ? <span className="pending">Печатает…</span> : m.role === "assistant" ? <Markdown text={m.text} /> : <span className="plain">{m.text}</span>}</div>
             </div>
           );
         })}
