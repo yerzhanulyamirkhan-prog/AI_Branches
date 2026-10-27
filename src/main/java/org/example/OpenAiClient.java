@@ -1,5 +1,5 @@
 package org.example;
-
+ 
 import java.io.IOException;
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -11,7 +11,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.regex.Pattern;
-
+ 
 /**
  * Клиент для любого провайдера с OpenAI-совместимым API (POST {base}/chat/completions):
  * Groq (Qwen, GPT-OSS), Moonshot (Kimi), NVIDIA NIM (Kimi K2), DeepSeek, OpenRouter и т. д.
@@ -21,24 +21,24 @@ import java.util.regex.Pattern;
  * следующая модель из списка. Ключ уходит только в заголовке Authorization и не попадает в логи.
  */
 public final class OpenAiClient {
-
+ 
     public static final String DEFAULT_BASE_URL = "https://api.groq.com/openai/v1";
     public static final List<String> DEFAULT_MODELS = List.of("qwen/qwen3-32b", "openai/gpt-oss-120b");
-
+ 
     private static final Pattern SAFE_MODEL = Pattern.compile("[A-Za-z0-9._:/-]{1,100}");
     private static final Pattern THINK = Pattern.compile("(?s)<think>.*?</think>");
-
+ 
     private final String apiKey;
     private final List<String> models;
     private final String baseUrl;
     private final Duration attemptTimeout;
     private final Duration totalTimeout;
     private final HttpClient http;
-
+ 
     public OpenAiClient(String apiKey, List<String> models, String baseUrl) {
         this(apiKey, models, baseUrl, Duration.ofSeconds(20), Duration.ofSeconds(40));
     }
-
+ 
     public OpenAiClient(String apiKey, List<String> models, String baseUrl,
                         Duration attemptTimeout, Duration totalTimeout) {
         if (apiKey == null || apiKey.isBlank()) {
@@ -62,14 +62,21 @@ public final class OpenAiClient {
                 .connectTimeout(Duration.ofSeconds(8))
                 .build();
     }
-
+ 
     /** История (последнее — от пользователя) -> ответ модели. */
     public String ask(List<Message> history) {
         long deadline = System.nanoTime() + totalTimeout.toNanos();
         String lastProblem = "нет ответа";
-
+        // модели, которые отклонили именно этот запрос (400): повторять их бессмысленно
+        java.util.Set<String> rejected = new java.util.HashSet<>();
+        String rejectedDetail = null;
+        boolean otherProblems = false;
+ 
         for (int round = 0; round < 2; round++) {
             for (String model : models) {
+                if (rejected.contains(model)) {
+                    continue;
+                }
                 long left = deadline - System.nanoTime();
                 if (left < Duration.ofSeconds(2).toNanos()) {
                     throw new AiException("ИИ сейчас перегружен и не успел ответить. Попробуйте ещё раз через минуту.");
@@ -103,16 +110,26 @@ public final class OpenAiClient {
                             withReasoning = false;
                             continue;
                         }
-                        if (code == 400 || code == 401 || code == 403) {
+                        if (code == 401 || code == 403) {
                             throw new AiException(explainFatal(code, detail));
                         }
+                        if (code == 400) {
+                            // например, «model called a tool»: пробуем другую модель
+                            rejected.add(model);
+                            rejectedDetail = detail;
+                            lastProblem = "модель " + model + " отклонила запрос: " + detail;
+                            break;
+                        }
+                        otherProblems = true;
                         lastProblem = "модель " + model + " ответила " + code;
                     } catch (AiException e) {
                         throw e;
                     } catch (java.net.http.HttpTimeoutException e) {
+                        otherProblems = true;
                         lastProblem = "модель " + model + " не ответила вовремя";
                         System.err.println("[ai] " + lastProblem);
                     } catch (IOException e) {
+                        otherProblems = true;
                         lastProblem = "нет связи с провайдером ИИ (" + e.getClass().getSimpleName() + ")";
                         System.err.println("[ai] " + model + ": " + e);
                     } catch (InterruptedException e) {
@@ -124,11 +141,14 @@ public final class OpenAiClient {
             }
         }
         System.err.println("[ai] все модели недоступны, последняя причина: " + lastProblem);
+        if (!otherProblems && rejected.size() == models.size() && rejectedDetail != null) {
+            throw new AiException(explainFatal(400, rejectedDetail));
+        }
         throw new AiException("ИИ сейчас недоступен или перегружен (" + lastProblem + "). Попробуйте ещё раз через минуту.");
     }
-
+ 
     // ------------------------------------------------------------ request/response
-
+ 
     /** Для Qwen3 «думать» отключаем (иначе ответ в разы дольше), для GPT-OSS ставим минимум. */
     static String reasoningEffort(String model) {
         String m = model.toLowerCase();
@@ -140,7 +160,7 @@ public final class OpenAiClient {
         }
         return null;
     }
-
+ 
     static String buildRequest(String model, List<Message> history, boolean withReasoning) {
         // Склеиваем подряд идущие реплики одной роли и начинаем с user: так принимают все провайдеры.
         List<String[]> turns = new ArrayList<>();
@@ -170,7 +190,7 @@ public final class OpenAiClient {
         }
         return sb.append('}').toString();
     }
-
+ 
     /** Текст ответа или null, если его нет. */
     static String extractAnswer(String json) {
         Object root;
@@ -189,7 +209,7 @@ public final class OpenAiClient {
         String text = THINK.matcher(content).replaceAll("").strip();
         return text.isEmpty() ? null : text;
     }
-
+ 
     private static String errorMessage(String json) {
         try {
             if (Json.parse(json) instanceof Map<?, ?> o && o.get("error") instanceof Map<?, ?> e
@@ -201,7 +221,7 @@ public final class OpenAiClient {
         }
         return "(без описания)";
     }
-
+ 
     private static String explainFatal(int code, String detail) {
         if (code == 401 || code == 403) {
             return "Провайдер ИИ не принял ключ (проверьте LLM_API_KEY и LLM_BASE_URL: ключ верный, не отозван и выдан именно этим провайдером).";
@@ -209,3 +229,4 @@ public final class OpenAiClient {
         return "ИИ отклонил запрос: " + detail;
     }
 }
+
